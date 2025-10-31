@@ -246,7 +246,7 @@ defmodule Rebus.Message do
   end
 
   @doc """
-  Encodes a message to binary format.
+  Encodes a message to iodata format.
 
   Returns the message encoded according to the D-Bus wire format specification.
   The endianness can be specified as `:little` or `:big` (default: `:little`).
@@ -259,15 +259,15 @@ defmodule Rebus.Message do
   ## Examples
 
       iex> message = Rebus.Message.new!(:signal, path: "/", interface: "test", member: "Test")
-      iex> {:ok, binary} = Rebus.Message.encode(message)
-      iex> is_binary(binary)
+      iex> {:ok, iodata} = Rebus.Message.encode(message)
+      iex> is_binary(IO.iodata_to_binary(iodata))
       true
 
   ## Returns
 
-  `{:ok, binary}` on success, `{:error, reason}` on failure.
+  `{:ok, iodata}` on success, `{:error, reason}` on failure.
   """
-  @spec encode(t(), :little | :big) :: {:ok, binary()} | {:error, String.t()}
+  @spec encode(t(), :little | :big) :: {:ok, iodata()} | {:error, String.t()}
   def encode(message, endianness \\ :little) do
     try do
       # Encode header fields as array of (byte, variant) pairs
@@ -276,11 +276,10 @@ defmodule Rebus.Message do
       # Encode body if present
       body_data =
         if message.body == [] do
-          <<>>
+          []
         else
           try do
-            encoded_buffer = Encoder.encode(message.signature, message.body, endianness)
-            IO.iodata_to_binary(encoded_buffer)
+            Encoder.encode(message.signature, message.body, endianness)
           rescue
             e -> throw({:error, "Failed to encode body: #{inspect(e)}"})
           catch
@@ -289,7 +288,7 @@ defmodule Rebus.Message do
         end
 
       # Calculate actual body length
-      body_length = byte_size(body_data)
+      body_length = IO.iodata_length(body_data)
 
       # Encode the fixed header
       endian_flag = if endianness == :little, do: ?l, else: ?B
@@ -300,31 +299,31 @@ defmodule Rebus.Message do
       # Header fields as array
       header_fields_encoded =
         try do
-          encoded_buffer = Encoder.encode("a(yv)", [header_fields_data], endianness)
-          IO.iodata_to_binary(encoded_buffer)
+          Encoder.encode("a(yv)", [header_fields_data], endianness)
         rescue
           e -> throw({:error, "Failed to encode header fields: #{inspect(e)}"})
         catch
           e -> throw({:error, "Failed to encode header fields: #{inspect(e)}"})
         end
 
-      # Build complete header
-      header =
+      # Build complete header as iodata
+      header_fixed =
         case endianness do
           :little ->
             <<endian_flag, type_byte, flags_byte, version_byte, body_length::little-32,
-              message.serial::little-32>> <> header_fields_encoded
+              message.serial::little-32>>
 
           :big ->
             <<endian_flag, type_byte, flags_byte, version_byte, body_length::big-32,
-              message.serial::big-32>> <> header_fields_encoded
+              message.serial::big-32>>
         end
 
-      # Pad header to 8-byte boundary
-      header_padded = pad_to_8_bytes(header)
+      # Combine header parts as iodata
+      header_iodata = [header_fixed, header_fields_encoded]
 
-      # Combine header and body
-      complete_message = header_padded <> body_data
+      # Pad header to 8-byte boundary and combine with body
+      header_padded = pad_to_8_bytes_iodata(header_iodata)
+      complete_message = [header_padded, body_data]
 
       {:ok, complete_message}
     catch
@@ -766,14 +765,15 @@ defmodule Rebus.Message do
     end)
   end
 
-  defp pad_to_8_bytes(binary) do
-    remainder = rem(byte_size(binary), 8)
+  defp pad_to_8_bytes_iodata(iodata) do
+    iodata_size = IO.iodata_length(iodata)
+    remainder = rem(iodata_size, 8)
 
     if remainder == 0 do
-      binary
+      iodata
     else
       padding_size = 8 - remainder
-      binary <> <<0::size(padding_size * 8)>>
+      [iodata, <<0::size(padding_size * 8)>>]
     end
   end
 

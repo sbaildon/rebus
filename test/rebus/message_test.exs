@@ -2,6 +2,14 @@ defmodule Rebus.MessageTest do
   use ExUnit.Case, async: true
   alias Rebus.Message
 
+  # Helper function to encode message and return binary for decoding
+  defp encode_to_binary(message, endianness \\ :little) do
+    case Message.encode(message, endianness) do
+      {:ok, iodata} -> {:ok, IO.iodata_to_binary(iodata)}
+      error -> error
+    end
+  end
+
   describe "new/2" do
     test "creates a valid method call message" do
       assert {:ok, message} =
@@ -227,7 +235,7 @@ defmodule Rebus.MessageTest do
           serial: 12345
         )
 
-      assert {:ok, encoded} = Message.encode(original)
+      assert {:ok, encoded} = encode_to_binary(original)
       assert is_binary(encoded)
       assert byte_size(encoded) > 0
 
@@ -256,7 +264,7 @@ defmodule Rebus.MessageTest do
           serial: 54321
         )
 
-      assert {:ok, encoded} = Message.encode(original)
+      assert {:ok, encoded} = encode_to_binary(original)
       assert {:ok, decoded} = Message.decode(encoded)
 
       assert decoded.type == original.type
@@ -276,7 +284,7 @@ defmodule Rebus.MessageTest do
           serial: 1000
         )
 
-      assert {:ok, encoded} = Message.encode(original)
+      assert {:ok, encoded} = encode_to_binary(original)
       assert {:ok, decoded} = Message.decode(encoded)
 
       assert decoded.type == original.type
@@ -297,12 +305,12 @@ defmodule Rebus.MessageTest do
         )
 
       # Test little endian
-      assert {:ok, encoded_little} = Message.encode(original, :little)
+      assert {:ok, encoded_little} = encode_to_binary(original, :little)
       assert {:ok, decoded_little} = Message.decode(encoded_little)
       assert decoded_little.body == original.body
 
       # Test big endian
-      assert {:ok, encoded_big} = Message.encode(original, :big)
+      assert {:ok, encoded_big} = encode_to_binary(original, :big)
       assert {:ok, decoded_big} = Message.decode(encoded_big)
       assert decoded_big.body == original.body
 
@@ -318,7 +326,7 @@ defmodule Rebus.MessageTest do
           flags: [:no_reply_expected, :no_auto_start]
         )
 
-      assert {:ok, encoded} = Message.encode(original)
+      assert {:ok, encoded} = encode_to_binary(original)
       assert {:ok, decoded} = Message.decode(encoded)
 
       assert Enum.sort(decoded.flags) == Enum.sort(original.flags)
@@ -334,7 +342,7 @@ defmodule Rebus.MessageTest do
           signature: "isbd"
         )
 
-      assert {:ok, encoded} = Message.encode(original)
+      assert {:ok, encoded} = encode_to_binary(original)
       assert {:ok, decoded} = Message.decode(encoded)
 
       assert decoded.body == original.body
@@ -550,7 +558,7 @@ defmodule Rebus.MessageTest do
           signature: "i"
         )
 
-      {:ok, encoded} = Message.encode(valid_message, :little)
+      {:ok, encoded} = encode_to_binary(valid_message, :little)
 
       # Create a truncated message that will fail
       truncated = binary_part(encoded, 0, byte_size(encoded) - 5)
@@ -609,7 +617,7 @@ defmodule Rebus.MessageTest do
         )
 
       # Test encoding with big endian
-      assert {:ok, encoded_big} = Message.encode(message, :big)
+      assert {:ok, encoded_big} = encode_to_binary(message, :big)
       assert {:ok, decoded} = Message.decode(encoded_big)
       assert decoded.body == [42]
     end
@@ -639,7 +647,7 @@ defmodule Rebus.MessageTest do
           serial: 987_654_321
         )
 
-      assert {:ok, encoded} = Message.encode(message, :little)
+      assert {:ok, encoded} = encode_to_binary(message, :little)
       assert {:ok, decoded} = Message.decode(encoded)
 
       assert decoded.header_fields.path == "/test/path"
@@ -854,7 +862,7 @@ defmodule Rebus.MessageTest do
         )
 
       # This should work - signature is generated automatically
-      assert {:ok, _encoded} = Message.encode(message, :little)
+      assert {:ok, _encoded} = encode_to_binary(message, :little)
     end
 
     test "handles different endianness correctly" do
@@ -868,8 +876,8 @@ defmodule Rebus.MessageTest do
         )
 
       # Test both endianness formats
-      assert {:ok, encoded_little} = Message.encode(message, :little)
-      assert {:ok, encoded_big} = Message.encode(message, :big)
+      assert {:ok, encoded_little} = encode_to_binary(message, :little)
+      assert {:ok, encoded_big} = encode_to_binary(message, :big)
 
       # Should be able to decode both
       assert {:ok, decoded_little} = Message.decode(encoded_little)
@@ -899,7 +907,7 @@ defmodule Rebus.MessageTest do
             flags: flags
           )
 
-        assert {:ok, encoded} = Message.encode(message, :little)
+        assert {:ok, encoded} = encode_to_binary(message, :little)
         assert {:ok, decoded} = Message.decode(encoded)
         assert decoded.flags == flags
       end
@@ -919,7 +927,7 @@ defmodule Rebus.MessageTest do
           signature: "sssss"
         )
 
-      assert {:ok, encoded} = Message.encode(message, :little)
+      assert {:ok, encoded} = encode_to_binary(message, :little)
       assert {:ok, decoded} = Message.decode(encoded)
       assert decoded.body == large_body
     end
@@ -1039,7 +1047,7 @@ defmodule Rebus.MessageTest do
       }
 
       # This should still validate the basic structure
-      assert {:ok, encoded} = Message.encode(message_with_rescue_path, :little)
+      assert {:ok, encoded} = encode_to_binary(message_with_rescue_path, :little)
       assert is_binary(encoded)
 
       # Test decode error path with too short data
@@ -1048,6 +1056,90 @@ defmodule Rebus.MessageTest do
       assert_raise MatchError, fn ->
         Message.decode(too_short_data)
       end
+
+      # Test iodata padding edge cases
+      # Create a message that will require padding
+      {:ok, minimal_message} =
+        Message.new(:signal,
+          # Very short path to trigger specific padding scenarios
+          path: "/a",
+          # Minimal interface
+          interface: "a.b",
+          # Minimal member
+          member: "a"
+        )
+
+      {:ok, iodata_result} = Message.encode(minimal_message, :little)
+      binary_result = IO.iodata_to_binary(iodata_result)
+
+      # Verify the message can be decoded (which ensures padding worked correctly)
+      assert {:ok, decoded_minimal} = Message.decode(binary_result)
+      assert decoded_minimal.header_fields.path == "/a"
+
+      # Test different message sizes to exercise padding edge cases
+      test_cases = [
+        # Different path lengths to create different padding scenarios
+        {"/", "a.b", "a"},
+        {"/test", "com.example", "Method"},
+        {"/very/long/path/that/should/cause/different/padding", "very.long.interface.name",
+         "VeryLongMethodName"}
+      ]
+
+      for {path, interface, member} <- test_cases do
+        {:ok, test_msg} = Message.new(:signal, path: path, interface: interface, member: member)
+        {:ok, test_iodata} = Message.encode(test_msg, :little)
+        test_binary = IO.iodata_to_binary(test_iodata)
+
+        # Verify proper 8-byte alignment (message length should be multiple of 8 after header)
+        # The header portion before body should be 8-byte aligned
+        assert {:ok, _decoded} = Message.decode(test_binary)
+      end
+
+      # Test edge case where iodata is already 8-byte aligned (no padding needed)
+      {:ok, aligned_msg} =
+        Message.new(:signal,
+          path: "/test123",
+          interface: "test.interface",
+          member: "Test12345678"
+        )
+
+      {:ok, aligned_iodata} = Message.encode(aligned_msg, :little)
+      aligned_binary = IO.iodata_to_binary(aligned_iodata)
+      assert {:ok, _} = Message.decode(aligned_binary)
+
+      # Test error handling in size estimation (covers rescue clauses)
+      # This tests internal error handling paths that might not be covered
+      invalid_msg = %Message{
+        type: :signal,
+        flags: [],
+        version: 1,
+        body_length: 0,
+        serial: 123,
+        header_fields: %{
+          path: "/test",
+          interface: "test.interface",
+          member: "Test"
+        },
+        body: [],
+        signature: ""
+      }
+
+      # This should still encode successfully due to error handling
+      assert {:ok, _} = Message.encode(invalid_msg, :little)
+
+      # Ensure both endianness paths in iodata encoding are covered
+      {:ok, endian_test_msg} =
+        Message.new(:signal, path: "/endian", interface: "test.endian", member: "TestEndian")
+
+      # Test little endian (likely already covered)
+      assert {:ok, little_iodata} = Message.encode(endian_test_msg, :little)
+      little_binary = IO.iodata_to_binary(little_iodata)
+      assert {:ok, _} = Message.decode(little_binary)
+
+      # Test big endian to ensure complete coverage of both paths
+      assert {:ok, big_iodata} = Message.encode(endian_test_msg, :big)
+      big_binary = IO.iodata_to_binary(big_iodata)
+      assert {:ok, _} = Message.decode(big_binary)
     end
   end
 end
