@@ -265,7 +265,7 @@ defmodule Rebus.Message do
   `{:ok, iodata}` on success, `{:error, reason}` on failure.
   """
   @spec encode(t(), :little | :big) :: {:ok, iodata()} | {:error, String.t()}
-  def encode(message, endianness \\ :little) do
+  def encode(message, endianness \\ :little) when endianness in [:little, :big] do
     # Encode header fields as array of (byte, variant) pairs
     header_fields_data = encode_header_fields(message.header_fields, endianness)
 
@@ -332,95 +332,67 @@ defmodule Rebus.Message do
 
   `{:ok, message}` on success, `{:error, reason}` on failure.
   """
-  @spec decode(binary()) :: {:ok, t()} | {:error, String.t()}
+  @spec decode(binary()) :: {:ok, t()} | {:error, any()}
   def decode(binary) when is_binary(binary) do
-    try do
-      # Parse fixed header
-      <<endian_flag, type_byte, flags_byte, version_byte, body_length::binary-size(4),
-        serial::binary-size(4), rest::binary>> = binary
+    # Parse fixed header
+    <<endian_flag, type_byte, flags_byte, version_byte, body_length::binary-size(4),
+      serial::binary-size(4), rest::binary>> = binary
 
-      # Determine endianness
-      endianness =
-        case endian_flag do
-          ?l -> :little
-          ?B -> :big
-          _ -> throw({:error, "Invalid endianness flag: #{endian_flag}"})
-        end
-
-      # Correct byte order for header integers
+    # Determine endianness
+    with {:ok, endianness} <- parse_endianness(endian_flag),
+         {:ok, type} <- type_from_code(type_byte) do
       body_length = read_uint32(body_length, endianness)
       serial = read_uint32(serial, endianness)
+      flags = decode_flags_byte(flags_byte)
 
-      # Decode message type
-      case type_from_code(type_byte) do
-        {:ok, type} ->
-          # Decode flags
-          flags = decode_flags_byte(flags_byte)
+      # Decode header fields array
+      [header_fields_data] = Decoder.decode("a(yv)", rest, endianness)
+      # Parse header fields
+      header_fields = decode_header_fields(header_fields_data)
 
-          # Decode header fields array
-          case Decoder.decode("a(yv)", rest, endianness) do
-            [header_fields_data] ->
-              # Parse header fields
-              header_fields = decode_header_fields(header_fields_data)
+      # Calculate header length from the signature structure
+      # For now, we'll use a simpler approach - calculate from known header size
+      header_fields_size = estimate_header_fields_size(header_fields_data, endianness)
+      # Fixed header (12 bytes) + header fields
+      header_length = 12 + header_fields_size
+      header_padded_length = div(header_length + 7, 8) * 8
 
-              # Calculate header length from the signature structure
-              # For now, we'll use a simpler approach - calculate from known header size
-              header_fields_size = estimate_header_fields_size(header_fields_data, endianness)
-              # Fixed header (12 bytes) + header fields
-              header_length = 12 + header_fields_size
-              header_padded_length = div(header_length + 7, 8) * 8
+      # Extract body from the remaining data after padding
+      # Subtract fixed header size
+      body_start = header_padded_length - 12
 
-              # Extract body from the remaining data after padding
-              # Subtract fixed header size
-              body_start = header_padded_length - 12
+      if byte_size(rest) == body_start + body_length do
+        <<_::binary-size(body_start), body_binary::binary-size(body_length), _::binary>> =
+          rest
 
-              if byte_size(rest) >= body_start + body_length do
-                <<_::binary-size(body_start), body_binary::binary-size(body_length), _::binary>> =
-                  rest
+        # Decode body if present
+        signature = Map.get(header_fields, :signature, "")
 
-                # Decode body if present
-                signature = Map.get(header_fields, :signature, "")
-
-                {body, final_signature} =
-                  if signature == "" or body_length == 0 do
-                    {[], ""}
-                  else
-                    try do
-                      {Decoder.decode(signature, body_binary, endianness), signature}
-                    rescue
-                      e -> throw({:error, "Failed to decode body: #{inspect(e)}"})
-                    catch
-                      e -> throw({:error, "Failed to decode body: #{inspect(e)}"})
-                    end
-                  end
-
-                message = %__MODULE__{
-                  type: type,
-                  flags: flags,
-                  version: version_byte,
-                  body_length: body_length,
-                  serial: serial,
-                  header_fields: header_fields,
-                  body: body,
-                  signature: final_signature
-                }
-
-                {:ok, message}
-              else
-                throw({:error, "Insufficient data for message body"})
-              end
-
-            _ ->
-              throw({:error, "Failed to decode header fields"})
+        {body, final_signature} =
+          if signature == "" or body_length == 0 do
+            {[], ""}
+          else
+            {Decoder.decode(signature, body_binary, endianness), signature}
           end
 
-        {:error, reason} ->
-          throw({:error, reason})
+        message = %__MODULE__{
+          type: type,
+          flags: flags,
+          version: version_byte,
+          body_length: body_length,
+          serial: serial,
+          header_fields: header_fields,
+          body: body,
+          signature: final_signature
+        }
+
+        {:ok, message}
+      else
+        {:error, :insufficient_data}
       end
-    catch
-      {:error, reason} -> {:error, reason}
-      :error -> {:error, "Invalid message format"}
     end
+  rescue
+    _ -> {:error, :invalid_message}
   end
 
   @doc """
@@ -465,61 +437,38 @@ defmodule Rebus.Message do
   @spec parse(binary()) :: {:ok, t(), binary()} | {:error, String.t()} | nil
   def parse(binary) when is_binary(binary) do
     # Need at least 12 bytes for the fixed header
-    if byte_size(binary) < 12 do
-      nil
-    else
+    if byte_size(binary) >= 12 do
       # Parse fixed header to get body length and endianness
       <<endian_flag, _type_byte, _flags_byte, _version_byte, body_length::binary-size(4),
         _serial::binary-size(4), rest::binary>> = binary
 
       # Determine endianness
-      endianness =
-        case endian_flag do
-          ?l -> :little
-          ?B -> :big
-          _ -> nil
-        end
+      with {:ok, endianness} <- parse_endianness(endian_flag),
+           {:ok, header_fields_length} <- extract_array_length(rest, endianness) do
+        # Calculate header fields size: 4 bytes (array length) + alignment + data
+        # Array data is aligned to 8-byte boundary (variant alignment)
+        length_plus_alignment = 4 + calculate_padding(4, 8)
+        header_fields_size = length_plus_alignment + header_fields_length
 
-      if endianness do
+        # Fixed header (12 bytes) + header fields, padded to 8-byte boundary
+        header_length = 12 + header_fields_size
+        header_padded_length = div(header_length + 7, 8) * 8
+
         # Correct byte order for body length
         body_length = read_uint32(body_length, endianness)
+        # Total message size = padded header + body
+        total_message_size = header_padded_length + body_length
 
-        # Try to decode header fields to determine their size
-        # Instead of fully decoding, just extract the array length from the binary
-        case extract_array_length(rest, endianness) do
-          {:ok, header_fields_length} ->
-            # Calculate header fields size: 4 bytes (array length) + alignment + data
-            # Array data is aligned to 8-byte boundary (variant alignment)
-            length_plus_alignment = 4 + calculate_padding(4, 8)
-            header_fields_size = length_plus_alignment + header_fields_length
+        # Check if we have enough data for the complete message
+        if byte_size(binary) >= total_message_size do
+          # Extract exactly the right amount of data and decode it
+          <<message_binary::binary-size(total_message_size), remaining_data::binary>> =
+            binary
 
-            # Fixed header (12 bytes) + header fields, padded to 8-byte boundary
-            header_length = 12 + header_fields_size
-            header_padded_length = div(header_length + 7, 8) * 8
-
-            # Total message size = padded header + body
-            total_message_size = header_padded_length + body_length
-
-            # Check if we have enough data for the complete message
-            if byte_size(binary) >= total_message_size do
-              # Extract exactly the right amount of data and decode it
-              <<message_binary::binary-size(total_message_size), remaining_data::binary>> = binary
-
-              case decode(message_binary) do
-                {:ok, message} -> {:ok, message, remaining_data}
-                {:error, reason} -> {:error, reason}
-              end
-            else
-              nil
-            end
-
-          {:error, _} ->
-            # Cannot extract array length, insufficient data
-            nil
+          with {:ok, message} <- decode(message_binary) do
+            {:ok, message, remaining_data}
+          end
         end
-      else
-        # Invalid endianness flag
-        nil
       end
     end
   end
@@ -567,10 +516,11 @@ defmodule Rebus.Message do
   @doc """
   Gets the message type from an integer code.
   """
-  @spec type_from_code(non_neg_integer()) :: {:ok, message_type()} | {:error, String.t()}
+  @spec type_from_code(non_neg_integer()) ::
+          {:ok, message_type()} | {:error, :invalid_message_type}
   def type_from_code(code) do
     case Map.get(@message_types, code) do
-      nil -> {:error, "Unknown message type code: #{code}"}
+      nil -> {:error, :invalid_message_type}
       type -> {:ok, type}
     end
   end
@@ -860,6 +810,10 @@ defmodule Rebus.Message do
 
   defp read_uint32(<<value::little-32>>, :little), do: value
   defp read_uint32(<<value::big-32>>, :big), do: value
+
+  defp parse_endianness(?l), do: {:ok, :little}
+  defp parse_endianness(?B), do: {:ok, :big}
+  defp parse_endianness(_), do: {:error, :invalid_endianness}
 
   defp extract_array_length(binary, endianness) do
     # D-Bus arrays start with a 4-byte length field

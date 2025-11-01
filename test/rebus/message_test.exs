@@ -534,17 +534,14 @@ defmodule Rebus.MessageTest do
       # Create a message with invalid endianness (not 'l' or 'B')
       invalid_data = <<99, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>>
 
-      assert {:error, reason} = Message.decode(invalid_data)
-      assert reason =~ "Invalid endianness flag"
+      assert {:error, :invalid_endianness} = Message.decode(invalid_data)
     end
 
     test "rejects insufficient data" do
       # Too short message (less than 12 bytes for header)
       short_data = <<108, 1, 0, 0>>
 
-      assert_raise MatchError, fn ->
-        Message.decode(short_data)
-      end
+      assert {:error, :invalid_message} = Message.decode(short_data)
     end
 
     test "handles body decoding errors" do
@@ -565,6 +562,140 @@ defmodule Rebus.MessageTest do
 
       # This should be different size
       assert byte_size(truncated) < byte_size(encoded)
+    end
+
+    test "rejects invalid message type in binary" do
+      # Create a binary with invalid message type (99 instead of 1-4)
+      # Format: endian_flag, type_byte, flags_byte, version_byte, body_length(4), serial(4), header_fields...
+      invalid_message_binary = <<
+        # Little endian flag
+        ?l,
+        # Invalid message type (99)
+        99,
+        # Flags (0)
+        0,
+        # Version (1)
+        1,
+        # Body length (0) - little endian
+        0,
+        0,
+        0,
+        0,
+        # Serial (1) - little endian
+        1,
+        0,
+        0,
+        0,
+        # Header fields array length (0) - little endian
+        0,
+        0,
+        0,
+        0
+      >>
+
+      assert {:error, :invalid_message_type} = Message.decode(invalid_message_binary)
+    end
+
+    test "rejects message with body data that doesn't match signature" do
+      # Create a message that declares signature "i" (integer) but has invalid body data
+      # We'll manually construct this to bypass the normal encoding validation
+
+      # First, let's encode header fields that declare signature "i"
+      # Header field 8 is signature, with value "i"
+      signature_header_field = [8, {"g", "i"}]
+      header_fields_data = [signature_header_field]
+
+      # Encode the header fields using our encoder
+      header_fields_encoded = Rebus.Encoder.encode("a(yv)", [header_fields_data], :little)
+      header_fields_binary = IO.iodata_to_binary(header_fields_encoded)
+
+      # Create invalid body data - string bytes instead of integer
+      # This should be 4 bytes for an integer, but we'll put string data
+      # Invalid for integer decoding
+      invalid_body_data = <<0xFF, 0xFF, 0xFF>>
+      body_length = byte_size(invalid_body_data)
+
+      # Calculate padding for header fields to 8-byte boundary
+      header_fields_size = byte_size(header_fields_binary)
+      # 12 bytes fixed header + header fields
+      header_total_size = 12 + header_fields_size
+      header_padded_size = div(header_total_size + 7, 8) * 8
+      header_padding = header_padded_size - header_total_size
+
+      # Construct the complete message
+      message_binary = <<
+        # Little endian flag
+        ?l,
+        # Signal message type (4)
+        4,
+        # Flags (0)
+        0,
+        # Version (1)
+        1,
+        # Body length - little endian
+        body_length::little-32,
+        # Serial (1) - little endian
+        1::little-32,
+        # Header fields
+        header_fields_binary::binary,
+        # Padding to 8-byte boundary
+        0::size(header_padding * 8),
+        # Invalid body data
+        invalid_body_data::binary
+      >>
+
+      # This should fail when trying to decode the body according to signature "i"
+      assert {:error, :invalid_message} = Message.decode(message_binary)
+    end
+
+    test "rejects message with body data type mismatch" do
+      # Create a message that declares signature "s" (string) but has integer body data
+      # This tests a different kind of signature mismatch
+
+      # Header field 8 is signature, with value "s" (string)
+      signature_header_field = [8, {"g", "s"}]
+      header_fields_data = [signature_header_field]
+
+      # Encode the header fields
+      header_fields_encoded = Rebus.Encoder.encode("a(yv)", [header_fields_data], :little)
+      header_fields_binary = IO.iodata_to_binary(header_fields_encoded)
+
+      # Create body data that looks like an integer (4 bytes) instead of a string
+      # A string should start with a length field, but we'll put raw integer bytes
+      # Integer data when expecting string
+      invalid_body_data = <<42::little-32>>
+      body_length = byte_size(invalid_body_data)
+
+      # Calculate padding for header fields to 8-byte boundary
+      header_fields_size = byte_size(header_fields_binary)
+      header_total_size = 12 + header_fields_size
+      header_padded_size = div(header_total_size + 7, 8) * 8
+      header_padding = header_padded_size - header_total_size
+
+      # Construct the complete message
+      message_binary = <<
+        # Little endian flag
+        ?l,
+        # Signal message type
+        4,
+        # Flags
+        0,
+        # Version
+        1,
+        # Body length
+        body_length::little-32,
+        # Serial
+        1::little-32,
+        # Header fields
+        header_fields_binary::binary,
+        # Padding
+        0::size(header_padding * 8),
+        # Invalid body data
+        invalid_body_data::binary
+      >>
+
+      # This should fail when trying to decode as string but finding integer-like data
+      assert {:error, :invalid_message} = Message.decode(message_binary)
     end
   end
 
@@ -741,8 +872,8 @@ defmodule Rebus.MessageTest do
     end
 
     test "type_from_code/1 returns error for unknown codes" do
-      assert Message.type_from_code(0) == {:error, "Unknown message type code: 0"}
-      assert Message.type_from_code(99) == {:error, "Unknown message type code: 99"}
+      assert {:error, :invalid_message_type} = Message.type_from_code(0)
+      assert {:error, :invalid_message_type} = Message.type_from_code(99)
     end
   end
 
@@ -1065,9 +1196,7 @@ defmodule Rebus.MessageTest do
       # Test decode error path with too short data
       too_short_data = <<108, 1, 0, 0, 12>>
 
-      assert_raise MatchError, fn ->
-        Message.decode(too_short_data)
-      end
+      assert {:error, :invalid_message} = Message.decode(too_short_data)
 
       # Test iodata padding edge cases
       # Create a message that will require padding
@@ -1168,7 +1297,7 @@ defmodule Rebus.MessageTest do
     test "returns nil for invalid header data" do
       # Invalid endianness flag
       invalid_header = <<255, 4, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0>>
-      assert Message.parse(invalid_header) == nil
+      assert {:error, :invalid_endianness} = Message.parse(invalid_header)
     end
 
     test "returns nil for partial message" do
