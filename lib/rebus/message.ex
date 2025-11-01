@@ -336,8 +336,8 @@ defmodule Rebus.Message do
   def decode(binary) when is_binary(binary) do
     try do
       # Parse fixed header
-      <<endian_flag, type_byte, flags_byte, version_byte, body_length::32, serial::32,
-        rest::binary>> = binary
+      <<endian_flag, type_byte, flags_byte, version_byte, body_length::binary-size(4),
+        serial::binary-size(4), rest::binary>> = binary
 
       # Determine endianness
       endianness =
@@ -348,16 +348,8 @@ defmodule Rebus.Message do
         end
 
       # Correct byte order for header integers
-      {body_length, serial} =
-        if endianness == :little do
-          <<body_length::little-32>> = <<body_length::32>>
-          <<serial::little-32>> = <<serial::32>>
-          {body_length, serial}
-        else
-          <<body_length::big-32>> = <<body_length::32>>
-          <<serial::big-32>> = <<serial::32>>
-          {body_length, serial}
-        end
+      body_length = read_uint32(body_length, endianness)
+      serial = read_uint32(serial, endianness)
 
       # Decode message type
       case type_from_code(type_byte) do
@@ -477,8 +469,8 @@ defmodule Rebus.Message do
       nil
     else
       # Parse fixed header to get body length and endianness
-      <<endian_flag, _type_byte, _flags_byte, _version_byte, body_length::32, _serial::32,
-        rest::binary>> = binary
+      <<endian_flag, _type_byte, _flags_byte, _version_byte, body_length::binary-size(4),
+        _serial::binary-size(4), rest::binary>> = binary
 
       # Determine endianness
       endianness =
@@ -490,14 +482,7 @@ defmodule Rebus.Message do
 
       if endianness do
         # Correct byte order for body length
-        body_length =
-          if endianness == :little do
-            <<body_length::little-32>> = <<body_length::32>>
-            body_length
-          else
-            <<body_length::big-32>> = <<body_length::32>>
-            body_length
-          end
+        body_length = read_uint32(body_length, endianness)
 
         # Try to decode header fields to determine their size
         # Instead of fully decoding, just extract the array length from the binary
@@ -872,6 +857,9 @@ defmodule Rebus.Message do
       [iodata, <<0::size(padding_size * 8)>>]
     end
   end
+
+  defp read_uint32(<<value::little-32>>, :little), do: value
+  defp read_uint32(<<value::big-32>>, :big), do: value
 
   defp extract_array_length(binary, endianness) do
     # D-Bus arrays start with a 4-byte length field
