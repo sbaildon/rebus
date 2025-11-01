@@ -8,8 +8,8 @@ defmodule Rebus.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Starts a worker by calling: Rebus.Worker.start_link(arg)
-      # {Rebus.Worker, arg}
+      {Rebus.SignalHandler, []},
+      {DynamicSupervisor, strategy: :one_for_one, name: Rebus.ConnectionSupervisor}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

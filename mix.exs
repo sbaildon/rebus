@@ -12,9 +12,15 @@ defmodule Rebus.MixProject do
       deps: deps(),
       description: description(),
       package: package(),
-      source_url: @source_url
+      source_url: @source_url,
+      elixirc_paths: elixirc_paths(Mix.env()),
+      test_coverage: [ignore_modules: [Rebus.TestServer]]
     ]
   end
+
+  # Specifies which paths to compile per environment.
+  defp elixirc_paths(:test), do: ["lib", "test/lib"]
+  defp elixirc_paths(_), do: ["lib"]
 
   # Run "mix help compile.app" to learn about applications.
   def application do
@@ -28,7 +34,8 @@ defmodule Rebus.MixProject do
   defp deps do
     [
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false},
+      {:typedstruct, "~> 0.5.0", runtime: false}
     ]
   end
 
