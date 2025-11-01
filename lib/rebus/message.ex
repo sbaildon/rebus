@@ -266,66 +266,49 @@ defmodule Rebus.Message do
   """
   @spec encode(t(), :little | :big) :: {:ok, iodata()} | {:error, String.t()}
   def encode(message, endianness \\ :little) do
-    try do
-      # Encode header fields as array of (byte, variant) pairs
-      header_fields_data = encode_header_fields(message.header_fields, endianness)
+    # Encode header fields as array of (byte, variant) pairs
+    header_fields_data = encode_header_fields(message.header_fields, endianness)
 
-      # Encode body if present
-      body_data =
-        if message.body == [] do
-          []
-        else
-          try do
-            Encoder.encode(message.signature, message.body, endianness)
-          rescue
-            e -> throw({:error, "Failed to encode body: #{inspect(e)}"})
-          catch
-            e -> throw({:error, "Failed to encode body: #{inspect(e)}"})
-          end
-        end
+    # Encode body if present
+    body_data =
+      if message.body == [] do
+        []
+      else
+        Encoder.encode(message.signature, message.body, endianness)
+      end
 
-      # Calculate actual body length
-      body_length = IO.iodata_length(body_data)
+    # Calculate actual body length
+    body_length = IO.iodata_length(body_data)
 
-      # Encode the fixed header
-      endian_flag = if endianness == :little, do: ?l, else: ?B
-      type_byte = Map.get(@type_codes, message.type, 0)
-      flags_byte = encode_flags_byte(message.flags)
-      version_byte = message.version
+    # Encode the fixed header
+    endian_flag = if endianness == :little, do: ?l, else: ?B
+    type_byte = Map.get(@type_codes, message.type, 0)
+    flags_byte = encode_flags_byte(message.flags)
+    version_byte = message.version
 
-      # Header fields as array
-      header_fields_encoded =
-        try do
-          Encoder.encode("a(yv)", [header_fields_data], endianness)
-        rescue
-          e -> throw({:error, "Failed to encode header fields: #{inspect(e)}"})
-        catch
-          e -> throw({:error, "Failed to encode header fields: #{inspect(e)}"})
-        end
+    # Header fields as array
+    header_fields_encoded = Encoder.encode("a(yv)", [header_fields_data], endianness)
 
-      # Build complete header as iodata
-      header_fixed =
-        case endianness do
-          :little ->
-            <<endian_flag, type_byte, flags_byte, version_byte, body_length::little-32,
-              message.serial::little-32>>
+    # Build complete header as iodata
+    header_fixed =
+      case endianness do
+        :little ->
+          <<endian_flag, type_byte, flags_byte, version_byte, body_length::little-32,
+            message.serial::little-32>>
 
-          :big ->
-            <<endian_flag, type_byte, flags_byte, version_byte, body_length::big-32,
-              message.serial::big-32>>
-        end
+        :big ->
+          <<endian_flag, type_byte, flags_byte, version_byte, body_length::big-32,
+            message.serial::big-32>>
+      end
 
-      # Combine header parts as iodata
-      header_iodata = [header_fixed, header_fields_encoded]
+    # Combine header parts as iodata
+    header_iodata = [header_fixed, header_fields_encoded]
 
-      # Pad header to 8-byte boundary and combine with body
-      header_padded = pad_to_8_bytes_iodata(header_iodata)
-      complete_message = [header_padded, body_data]
+    # Pad header to 8-byte boundary and combine with body
+    header_padded = pad_to_8_bytes_iodata(header_iodata)
+    complete_message = [header_padded, body_data]
 
-      {:ok, complete_message}
-    catch
-      {:error, reason} -> {:error, reason}
-    end
+    {:ok, complete_message}
   end
 
   @doc """
@@ -763,7 +746,8 @@ defmodule Rebus.Message do
     fields_data
     |> Enum.reduce(%{}, fn [field_code, {_type, value}], acc ->
       case Map.get(@header_fields, field_code) do
-        nil -> acc  # Skip unknown field codes
+        # Skip unknown field codes
+        nil -> acc
         field -> Map.put(acc, field, value)
       end
     end)
