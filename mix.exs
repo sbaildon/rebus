@@ -1,13 +1,18 @@
 defmodule Rebus.MixProject do
   use Mix.Project
 
+  @source_url "https://github.com/ausimian/rebus"
+
   def project do
     [
       app: :rebus,
       version: "0.1.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      description: description(),
+      package: package(),
+      source_url: @source_url
     ]
   end
 
@@ -22,7 +27,23 @@ defmodule Rebus.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
+    ]
+  end
+
+  defp description do
+    "An Elixir implementation of the D-Bus message protocol."
+  end
+
+  defp package do
+    [
+      name: "rebus",
+      licenses: ["BSD"],
+      links: %{
+        "GitHub" => @source_url
+      },
+      maintainers: ["Nick Gunn"]
     ]
   end
 end
