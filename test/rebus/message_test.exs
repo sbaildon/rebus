@@ -231,8 +231,7 @@ defmodule Rebus.MessageTest do
           member: "TestMethod",
           destination: "com.example.Service",
           body: [42, "hello"],
-          signature: "is",
-          serial: 12345
+          signature: "is"
         )
 
       assert {:ok, encoded} = encode_to_binary(original)
@@ -260,8 +259,7 @@ defmodule Rebus.MessageTest do
         Message.new!(:signal,
           path: "/test",
           interface: "test.interface",
-          member: "EmptySignal",
-          serial: 54321
+          member: "EmptySignal"
         )
 
       assert {:ok, encoded} = encode_to_binary(original)
@@ -280,8 +278,7 @@ defmodule Rebus.MessageTest do
           error_name: "com.example.Error.TestError",
           reply_serial: 999,
           body: ["Something went wrong"],
-          signature: "s",
-          serial: 1000
+          signature: "s"
         )
 
       assert {:ok, encoded} = encode_to_binary(original)
@@ -753,16 +750,28 @@ defmodule Rebus.MessageTest do
       assert decoded.body == [42]
     end
 
-    test "handles messages with custom serial" do
+    test "handles messages with serial initialized to zero" do
+      {:ok, message} =
+        Message.new(:signal,
+          path: "/test",
+          interface: "test.interface",
+          member: "Test"
+        )
+
+      assert message.serial == 0
+    end
+
+    test "ignores serial option and always uses zero" do
+      # Even if serial is passed in options, it should be ignored
       {:ok, message} =
         Message.new(:signal,
           path: "/test",
           interface: "test.interface",
           member: "Test",
-          serial: 123_456_789
+          serial: 999_999
         )
 
-      assert message.serial == 123_456_789
+      assert message.serial == 0
     end
 
     test "handles encoding and decoding with all header fields" do
@@ -774,8 +783,7 @@ defmodule Rebus.MessageTest do
           destination: "test.destination",
           sender: "test.sender",
           signature: "s",
-          body: ["test"],
-          serial: 987_654_321
+          body: ["test"]
         )
 
       assert {:ok, encoded} = encode_to_binary(message, :little)
@@ -787,7 +795,7 @@ defmodule Rebus.MessageTest do
       assert decoded.header_fields.destination == "test.destination"
       assert decoded.header_fields.sender == "test.sender"
       assert decoded.header_fields.signature == "s"
-      assert decoded.serial == 987_654_321
+      assert decoded.serial == 0
       assert decoded.body == ["test"]
     end
 

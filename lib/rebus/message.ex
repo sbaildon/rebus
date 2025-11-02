@@ -178,10 +178,14 @@ defmodule Rebus.Message do
   - `opts` - Keyword list of options:
     - `:flags` - List of message flags (default: `[]`)
     - `:version` - Protocol version (default: `1`)
-    - `:serial` - Message serial number (default: auto-generated)
     - `:body` - Message body as list of values (default: `[]`)
     - `:signature` - Message body signature (default: auto-generated from body)
     - Header fields like `:path`, `:interface`, `:member`, etc.
+
+  ## Note
+
+  The serial number is always initialized to 0. The transport layer that dispatches
+  the message will assign the actual serial number.
 
   ## Examples
 
@@ -208,8 +212,7 @@ defmodule Rebus.Message do
          {:ok, signature} <- get_or_generate_signature(opts, body),
          {:ok, header_fields} <- extract_header_fields(opts),
          {:ok, validated_fields} <- validate_header_fields(header_fields),
-         :ok <- validate_required_fields(validated_type, header_fields),
-         serial <- Keyword.get(opts, :serial, generate_serial()) do
+         :ok <- validate_required_fields(validated_type, header_fields) do
       body_length = if body == [], do: 0, else: calculate_body_length(body, signature)
 
       message = %__MODULE__{
@@ -217,7 +220,7 @@ defmodule Rebus.Message do
         flags: flags,
         version: version,
         body_length: body_length,
-        serial: serial,
+        serial: 0,
         header_fields: validated_fields,
         body: body,
         signature: signature
@@ -732,11 +735,6 @@ defmodule Rebus.Message do
     # Basic signature validation - this could be more comprehensive
     String.length(signature) <= 255 and
       String.match?(signature, ~r/^[ybnqiuxtdsoghva()\[\]{}]*$/)
-  end
-
-  defp generate_serial do
-    # Random 32-bit number
-    :rand.uniform(4_294_967_295)
   end
 
   defp calculate_body_length(body, signature) do
