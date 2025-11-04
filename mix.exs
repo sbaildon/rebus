@@ -46,7 +46,7 @@ defmodule Rebus.MixProject do
   defp package do
     [
       name: "rebus",
-      licenses: ["BSD"],
+      licenses: ["MIT"],
       links: %{
         "GitHub" => @source_url
       },

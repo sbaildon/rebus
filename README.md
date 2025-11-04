@@ -106,7 +106,7 @@ The generated documentation includes comprehensive API references, examples, and
 
 ## License
 
-This project is licensed under the BSD License.
+This project is licensed under the MIT License.
 
 ## Contributing
 
