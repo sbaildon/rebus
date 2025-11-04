@@ -84,7 +84,7 @@ defmodule Rebus do
 
   ## Return Values
 
-  - `{:ok, pid}` - Returns the PID of the transport process for the connection
+  - `{:ok, pid}` - Returns the PID of the connection process
   - `{:error, reason}` - Connection failed due to the specified reason
 
   ## Examples
@@ -93,7 +93,7 @@ defmodule Rebus do
       {:ok, conn} = Rebus.connect(%{family: :local, path: "/tmp/my-dbus"})
 
       # Connect to a TCP endpoint
-      address = %{family: :inet, addr: {{127, 0, 0, 1}, 12345}}
+      address = %{family: :inet, addr: {127, 0, 0, 1}, port: 12345}
       {:ok, conn} = Rebus.connect(address)
 
   ## Notes
@@ -131,7 +131,7 @@ defmodule Rebus do
 
   ## Examples
 
-      {:ok, conn} = Rebus.connect(:session)
+      {:ok, conn} = Rebus.connect(%{family: :local, path: "/tmp/my-dbus"})
       ref = Rebus.add_signal_handler(conn)
 
       # The calling process will now receive messages like:
@@ -185,7 +185,7 @@ defmodule Rebus do
 
   ## Examples
 
-      {:ok, conn} = Rebus.connect(:session)
+      {:ok, conn} = Rebus.connect(%{family: :local, path: "/tmp/my-dbus"})
       ref = Rebus.add_signal_handler(conn)
 
       # ... handle signals ...
