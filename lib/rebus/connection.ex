@@ -6,6 +6,8 @@ defmodule Rebus.Connection do
   alias Rebus.SignalHandler
   alias Rebus.Message
 
+  require Logger
+
   def send(pid, %Message{} = msg) when is_pid(pid) do
     GenServer.call(pid, {:send, msg})
   end
@@ -123,6 +125,7 @@ defmodule Rebus.Connection do
         {:noreply, %{state | rref: handle}}
 
       {:error, reason} ->
+        Logger.warning(reason: reason)
         {:stop, {:shutdown, reason}, state}
     end
   end
