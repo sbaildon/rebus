@@ -22,7 +22,8 @@ defmodule Rebus.Connection do
 
   @spec start_link(keyword()) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link(args) do
-    GenServer.start_link(__MODULE__, args)
+    {name, args} = Keyword.pop(args, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, args, name: name)
   end
 
   typedstruct enforce: true do
