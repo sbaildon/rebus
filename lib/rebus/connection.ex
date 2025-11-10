@@ -50,6 +50,7 @@ defmodule Rebus.Connection do
     case :socket.recv(sock, 0) do
       {:ok, <<"OK ", guid::binary-size(32), "\r\n", rest::binary>>} ->
         :ok = :socket.send(sock, "BEGIN \r\n")
+        Logger.warning("begin")
         {:ok, %__MODULE__{sock: sock, guid: guid, prev: rest}, {:continue, :hello}}
 
       {:ok, _} ->
@@ -92,6 +93,7 @@ defmodule Rebus.Connection do
 
     {:ok, bin} = Message.encode(%{method | serial: state.serial})
     :ok = :socket.send(state.sock, bin)
+    Logger.warning("sent hello")
     {:noreply, %{state | serial: state.serial + 1}, {:continue, :hello_reply}}
   end
 
@@ -101,17 +103,21 @@ defmodule Rebus.Connection do
       {:ok, data} ->
         case Message.parse(state.prev <> data) do
           {:ok, %Message{type: :method_return, header_fields: %{reply_serial: 1}} = msg, rest} ->
+            Logger.warning("received good hello")
             {:noreply, %{state | name: hd(msg.body), prev: rest}, {:continue, :recv}}
 
           nil ->
             # Incomplete message, store data for next recv
+            Logger.warning("received incomplete hello")
             {:noreply, %{state | prev: state.prev <> data}, {:continue, :hello_reply}}
 
           error ->
+      Logger.warning(label: 1, error: error)
             {:stop, error, state}
         end
 
       error ->
+      Logger.warning(label: 2, error: error)
         {:stop, error, state}
     end
   end
@@ -122,10 +128,11 @@ defmodule Rebus.Connection do
         parse(state.prev <> data, %__MODULE__{state | prev: <<>>})
 
       {:select, {:select_info, :recv, handle}} ->
+          Logger.warning("got a handle")
         {:noreply, %{state | rref: handle}}
 
       {:error, reason} ->
-        Logger.warning(reason: reason)
+        Logger.warning(label: 3, reason: reason)
         {:stop, {:shutdown, reason}, state}
     end
   end
@@ -207,6 +214,8 @@ defmodule Rebus.Connection do
 
   defp get_auth_id do
     {resp, 0} = System.cmd("id", ["-u"])
+
+    Logger.warning(resp: resp)
 
     resp
     |> String.trim()
