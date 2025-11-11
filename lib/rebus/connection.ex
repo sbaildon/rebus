@@ -169,6 +169,7 @@ defmodule Rebus.Connection do
   end
 
   defp parse(data, %__MODULE__{} = state) do
+    Logger.warning(parsing: data)
     case Message.parse(data) do
       {:ok, %Message{header_fields: %{reply_serial: 1}} = msg, rest} when is_nil(state.name) ->
         parse(rest, %{state | name: hd(msg.body)})
