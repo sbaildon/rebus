@@ -63,6 +63,7 @@ defmodule Rebus.Connection do
 
   @impl true
   def handle_info({:"$socket", s, :select, h}, %__MODULE__{sock: s, rref: h} = state) do
+    Logger.warning("handling this thing")
     {:noreply, %{state | rref: nil}, {:continue, :recv}}
   end
 
